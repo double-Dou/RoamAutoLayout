@@ -1,7 +1,9 @@
 package com.bohui.autolayout;
 
+import android.animation.LayoutTransition;
 import android.content.Context;
 import android.graphics.Rect;
+import android.os.SystemClock;
 import android.util.AttributeSet;
 import android.view.MotionEvent;
 import android.view.View;
@@ -18,6 +20,9 @@ import androidx.annotation.Nullable;
 public class AutoLayoutView extends FrameLayout {
 
     private Context mContext;
+    private int delayTime = 300;
+    private long[] mHits = new long[2];
+    private boolean isDoubleClick = false;
     private float rawDownX;
     private float rawDownY;
     private float beginL;
@@ -25,6 +30,10 @@ public class AutoLayoutView extends FrameLayout {
     private Map<Integer, LocationRect> locationMap = new HashMap<>();
     private ArrayList<LocationRect> rectList = new ArrayList<>();
     private PreviewView currentView;
+    private PreviewView currentFullScreenView;
+    private boolean isFullScreen = false;
+    private boolean isAutoFullScreen = false;
+    private OnViewChangeListener changeListener;
 
     public AutoLayoutView(@NonNull Context context) {
         this(context, null);
@@ -37,6 +46,20 @@ public class AutoLayoutView extends FrameLayout {
 
     }
 
+    public boolean isCanAdd() {
+        if (getChildCount() >= 6) return false;
+        if (isFullScreen) {
+            if (isAutoFullScreen) {
+                return true;
+            }
+            return false;
+        }
+        return true;
+    }
+
+    public void setOnViewChangeListener(OnViewChangeListener listener) {
+        this.changeListener = listener;
+    }
 
     @Override
     public boolean onTouchEvent(MotionEvent event) {
@@ -46,14 +69,46 @@ public class AutoLayoutView extends FrameLayout {
             case MotionEvent.ACTION_DOWN:
                 rawDownX = event.getRawX();
                 rawDownY = event.getRawY();
+                PreviewView secondView = currentView;
+                currentView = null;
+                isDoubleClick = false;
                 currentView = (PreviewView) getTouchTarget(this, (int) event.getRawX(), (int) event.getRawY());
                 if (currentView == null) return super.onTouchEvent(event);
                 beginL = currentView.getX();
                 beginT = currentView.getY();
                 currentView.bringToFront();
+                currentView.setLayoutTransition(new LayoutTransition());
+                currentView.getLayoutTransition().enableTransitionType(LayoutTransition.CHANGING);
+                //实现数组的位移操作，点击一次，左移一位，末尾补上当前开机时间（cpu时间）
+                System.arraycopy(mHits, 1, mHits, 0, mHits.length - 1);
+                mHits[mHits.length - 1] = SystemClock.uptimeMillis();
+                if (delayTime > (SystemClock.uptimeMillis() - mHits[0])) {
+                    //此处执行双击事件
+                    if (currentView != null) {
+                        isDoubleClick = true;
+                        if (currentView == secondView && !isAutoFullScreen) {
+                            if (!isFullScreen) {
+                                isFullScreen = true;
+                                currentFullScreenView = currentView;
+                                startFullScreenAnimation(currentFullScreenView);
+                            }else {
+                                if (currentFullScreenView == currentView) {
+                                    isFullScreen = false;
+                                    startTranslateAnimation(currentView);
+                                    currentFullScreenView = null;
+                                }
+                            }
+                            if (this.changeListener != null) {
+                                this.changeListener.onFullScreen(isFullScreen, currentView);
+                            }
+                        } else {
+                            isDoubleClick = false;
+                        }
+                    }
+                }
                 return true;
             case MotionEvent.ACTION_MOVE:
-                if (currentView == null) return super.onTouchEvent(event);
+                if (currentView == null || isDoubleClick || isFullScreen) return super.onTouchEvent(event);
                 final float xDistance = event.getRawX() - rawDownX;
                 final float yDistance = event.getRawY() - rawDownY;
                 float l = beginL + xDistance;
@@ -69,10 +124,13 @@ public class AutoLayoutView extends FrameLayout {
                 checkCurrentViewLocation((int) event.getX(), (int) event.getY());
                 return true;
             case MotionEvent.ACTION_UP:
-                if (currentView == null) return super.onTouchEvent(event);
+                if (currentView == null || isDoubleClick || isFullScreen) return super.onTouchEvent(event);
                 if (currentView.getY() > ((FrameLayout) currentView.getParent()).getHeight() - currentView.getHeight() / 2) {
                     //删除
                     removeView(currentView);
+                    if (this.changeListener != null) {
+                        this.changeListener.onRemove(currentView);
+                    }
                 }
                 startTranslateAnimation(currentView);
                 break;
@@ -131,21 +189,37 @@ public class AutoLayoutView extends FrameLayout {
         }
     }
 
-    //执行位移缩放动画
-    private void startTranslateAnimation(final PreviewView target) {
+    // 双击全屏动画
+    private void startFullScreenAnimation(final PreviewView target) {
         target.isChangedL = false;
-        final float width = target.getLocation().getRect().right - target.getLocation().getRect().left;
-        final float height = target.getLocation().getRect().bottom - target.getLocation().getRect().top;
-        float scaleX = width / (target.getLayoutParams().width == 0 ? width : target.getLayoutParams().width);
-        float scaleY = height / (target.getLayoutParams().height == 0 ? height : target.getLayoutParams().height);
-        target.animate().x(target.getLocation().getRect().left).y(target.getLocation().getRect().top)
-//                .scaleX(scaleX - 0 < 0.0001 ? 1 : scaleX)
-//                .scaleY(scaleY - 0 < 0.0001 ? 1 : scaleX)
+        target.animate().x(0).y(0)
                 .withStartAction(new Runnable() {
                     @Override
                     public void run() {
                         if (!target.isChangedL){
                             target.isChangedL = true;
+                            final float width = getWidth();
+                            final float height = getHeight();
+                            LayoutParams subLp = (LayoutParams) target.getLayoutParams();
+                            subLp.width = (int) width;
+                            subLp.height = (int) height;
+                            target.setLayoutParams(subLp);
+                        }
+                    }
+                }).start();
+    }
+
+    //执行位移缩放动画
+    private void startTranslateAnimation(final PreviewView target) {
+        target.isChangedL = false;
+        target.animate().x(target.getLocation().getRect().left).y(target.getLocation().getRect().top)
+                .withStartAction(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (!target.isChangedL){
+                            target.isChangedL = true;
+                            final float width = target.getLocation().getRect().right - target.getLocation().getRect().left;
+                            final float height = target.getLocation().getRect().bottom - target.getLocation().getRect().top;
                             LayoutParams subLp = (LayoutParams) target.getLayoutParams();
                             subLp.width = (int) width;
                             subLp.height = (int) height;
@@ -163,6 +237,7 @@ public class AutoLayoutView extends FrameLayout {
     @Override
     public void addView(View child, ViewGroup.LayoutParams params) {
         if (getChildCount() >= 6) return;
+        if (!isCanAdd()) return;
         if (params instanceof FrameLayout.LayoutParams && child instanceof PreviewView) {
             Rect rect = new Rect();
             rect.left = ((LayoutParams) params).leftMargin;
@@ -177,6 +252,8 @@ public class AutoLayoutView extends FrameLayout {
             ((PreviewView) child).setLocation(locationRect);
             super.addView(child, params);
             reLayoutRect();
+
+            checkAutoFullScreen(false);
         }
     }
 
@@ -187,8 +264,33 @@ public class AutoLayoutView extends FrameLayout {
             locationMap.remove(((PreviewView) view).getLocation());
             rectList.remove(((PreviewView) view).getLocation());
             reLayoutRect();
+
+            checkAutoFullScreen(true);
         }
     }
+
+    //判断仅剩一个画面时是否自动全屏
+    private void checkAutoFullScreen(boolean isRemove) {
+        isAutoFullScreen = getChildCount() == 1;
+        isFullScreen = getChildCount() == 1;
+        currentFullScreenView = getChildCount() == 1 ?
+                (PreviewView) (getChildAt(0) instanceof PreviewView ?
+                        getChildAt(0) : null) : null;
+        if (isRemove) {
+            if (getChildCount() == 1) {
+                if (this.changeListener != null) {
+                    this.changeListener.onFullScreen(isFullScreen, currentFullScreenView);
+                }
+            }
+        }else {
+            if (getChildCount() <= 2) {
+                if (this.changeListener != null) {
+                    this.changeListener.onFullScreen(isFullScreen, currentFullScreenView);
+                }
+            }
+        }
+    }
+
 
     //增删画面时重新计算位置坐标
     private void reLayoutRect() {
@@ -221,15 +323,7 @@ public class AutoLayoutView extends FrameLayout {
         for (int i = 0; i < getChildCount(); i++) {
             View subView = getChildAt(i);
             if (subView instanceof PreviewView) {
-                FrameLayout.LayoutParams subLp = (LayoutParams) subView.getLayoutParams();
-                subLp.setMargins(((PreviewView) subView).getLocation().getRect().left,
-                        ((PreviewView) subView).getLocation().getRect().top, 0, 0);
-                subLp.width = ((PreviewView) subView).getLocation().getRect().right -
-                        ((PreviewView) subView).getLocation().getRect().left;
-                subLp.height = ((PreviewView) subView).getLocation().getRect().bottom -
-                        ((PreviewView) subView).getLocation().getRect().top;
                 startTranslateAnimation((PreviewView) subView);
-                subView.setLayoutParams(subLp);
             }
         }
     }
@@ -354,5 +448,10 @@ public class AutoLayoutView extends FrameLayout {
             return true;
         }
         return false;
+    }
+
+    public interface OnViewChangeListener {
+        void onRemove(PreviewView previewView);
+        void onFullScreen(boolean fullScreen, PreviewView previewView);
     }
 }

@@ -23,6 +23,7 @@ public class MainActivity extends AppCompatActivity {
         findViewById(R.id.add_btn).setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
+                if (!layoutView.isCanAdd()) return;
                 PreviewView subview = new PreviewView(MainActivity.this);
                 FrameLayout.LayoutParams subLp = new FrameLayout.LayoutParams(layoutView.getWidth() / 3, layoutView.getHeight() / 2);
                 subLp.setMargins(layoutView.getWidth() / 3, layoutView.getHeight() / 2, 0, 0);
