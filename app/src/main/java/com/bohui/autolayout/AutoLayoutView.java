@@ -20,6 +20,8 @@ import androidx.annotation.Nullable;
 public class AutoLayoutView extends FrameLayout {
 
     private Context mContext;
+    public int MODE_ONE = 1, MODE_TWO = 2, MODE_RANDOM = 6;
+    private int layoutMode = 6; //布局模式
     private int delayTime = 300;
     private long[] mHits = new long[2];
     private boolean isDoubleClick = false;
@@ -46,8 +48,14 @@ public class AutoLayoutView extends FrameLayout {
 
     }
 
+    //切换布局模式
+    public void changeLayoutMode(int layoutMode) {
+        if (layoutMode != MODE_ONE && layoutMode != MODE_TWO && layoutMode != MODE_RANDOM) return;
+        this.layoutMode = layoutMode;
+        changeLayoutModeLayout(false);
+    }
+
     public boolean isCanAdd() {
-        if (getChildCount() >= 6) return false;
         if (isFullScreen) {
             if (isAutoFullScreen) {
                 return true;
@@ -67,8 +75,10 @@ public class AutoLayoutView extends FrameLayout {
         int y = (int) event.getY();
         switch (event.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
+
                 rawDownX = event.getRawX();
                 rawDownY = event.getRawY();
+
                 PreviewView secondView = currentView;
                 currentView = null;
                 isDoubleClick = false;
@@ -79,6 +89,7 @@ public class AutoLayoutView extends FrameLayout {
                 currentView.bringToFront();
                 currentView.setLayoutTransition(new LayoutTransition());
                 currentView.getLayoutTransition().enableTransitionType(LayoutTransition.CHANGING);
+
                 //实现数组的位移操作，点击一次，左移一位，末尾补上当前开机时间（cpu时间）
                 System.arraycopy(mHits, 1, mHits, 0, mHits.length - 1);
                 mHits[mHits.length - 1] = SystemClock.uptimeMillis();
@@ -106,6 +117,7 @@ public class AutoLayoutView extends FrameLayout {
                         }
                     }
                 }
+
                 return true;
             case MotionEvent.ACTION_MOVE:
                 if (currentView == null || isDoubleClick || isFullScreen) return super.onTouchEvent(event);
@@ -126,10 +138,12 @@ public class AutoLayoutView extends FrameLayout {
             case MotionEvent.ACTION_UP:
                 if (currentView == null || isDoubleClick || isFullScreen) return super.onTouchEvent(event);
                 if (currentView.getY() > ((FrameLayout) currentView.getParent()).getHeight() - currentView.getHeight() / 2) {
-                    //删除
-                    removeView(currentView);
-                    if (this.changeListener != null) {
-                        this.changeListener.onRemove(currentView);
+                    if (layoutMode == MODE_RANDOM) {
+                        //删除
+                        removeView(currentView);
+                        if (this.changeListener != null) {
+                            this.changeListener.onRemove(currentView);
+                        }
                     }
                 }
                 startTranslateAnimation(currentView);
@@ -137,6 +151,48 @@ public class AutoLayoutView extends FrameLayout {
         }
         return super.onTouchEvent(event);
 
+    }
+
+    //切换布局模式后重新布局
+    private void changeLayoutModeLayout(boolean isAdd){
+        boolean shouldDel = false;
+        int startIndex = 1;
+        if (layoutMode == MODE_ONE && getChildCount() > 1) {
+            shouldDel = true;
+            startIndex = 1;
+        }else if (layoutMode == MODE_TWO && getChildCount() > 2) {
+            shouldDel = true;
+            startIndex = 2;
+        }else if (getChildCount() > 6){
+            shouldDel = true;
+            startIndex = 2;
+        }
+        if (isAdd){
+            if (layoutMode == MODE_ONE) {
+                shouldDel = true;
+                startIndex = 0;
+            }
+            if (layoutMode == MODE_TWO && getChildCount() > 1) {
+                shouldDel = true;
+                startIndex = 1;
+            }
+            if (layoutMode == MODE_RANDOM && getChildCount() > 5) {
+                shouldDel = true;
+                startIndex = 5;
+            }
+        }
+        if (shouldDel) {
+            for (int i = startIndex; i < getChildCount(); i++) {
+                for (int j = 0; j < getChildCount(); j++) {
+                    View childView = getChildAt(j);
+                    if (childView instanceof PreviewView) {
+                        if (((PreviewView) childView).getLocation().getLocation() == i) {
+                            removeView(childView);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     //移动画面时动态布局
@@ -236,9 +292,9 @@ public class AutoLayoutView extends FrameLayout {
 
     @Override
     public void addView(View child, ViewGroup.LayoutParams params) {
-        if (getChildCount() >= 6) return;
         if (!isCanAdd()) return;
         if (params instanceof FrameLayout.LayoutParams && child instanceof PreviewView) {
+            changeLayoutModeLayout(true);
             Rect rect = new Rect();
             rect.left = ((LayoutParams) params).leftMargin;
             rect.top = ((LayoutParams) params).topMargin;
@@ -252,7 +308,6 @@ public class AutoLayoutView extends FrameLayout {
             ((PreviewView) child).setLocation(locationRect);
             super.addView(child, params);
             reLayoutRect();
-
             checkAutoFullScreen(false);
         }
     }
@@ -264,7 +319,6 @@ public class AutoLayoutView extends FrameLayout {
             locationMap.remove(((PreviewView) view).getLocation());
             rectList.remove(((PreviewView) view).getLocation());
             reLayoutRect();
-
             checkAutoFullScreen(true);
         }
     }
